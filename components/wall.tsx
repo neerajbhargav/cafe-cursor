@@ -88,8 +88,8 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState<UnfurlResult | null>(null);
+  const [previewSource, setPreviewSource] = useState("");
   const [busy, setBusy] = useState(false);
-  const [unfurling, setUnfurling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounce = useRef<number | null>(null);
   const unfurlSeq = useRef(0);
@@ -120,15 +120,10 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
   useEffect(() => {
     if (debounce.current) window.clearTimeout(debounce.current);
     const trimmed = url.trim();
-    if (!trimmed) {
-      setPreview(null);
-      setUnfurling(false);
-      return;
-    }
-    setPreview(null);
     const seq = ++unfurlSeq.current;
+    if (!trimmed) return;
+
     debounce.current = window.setTimeout(async () => {
-      setUnfurling(true);
       try {
         const res = await fetch("/api/unfurl", {
           method: "POST",
@@ -138,16 +133,17 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
         if (seq !== unfurlSeq.current) return;
         if (!res.ok) {
           setPreview(null);
+          setPreviewSource(trimmed);
           return;
         }
         const meta = (await res.json()) as UnfurlResult;
         setPreview(meta);
+        setPreviewSource(trimmed);
         setName((current) => current || meta.name);
       } catch {
         if (seq !== unfurlSeq.current) return;
         setPreview(null);
-      } finally {
-        if (seq === unfurlSeq.current) setUnfurling(false);
+        setPreviewSource(trimmed);
       }
     }, 450);
     return () => {
@@ -180,6 +176,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
       setName("");
       setNote("");
       setPreview(null);
+      setPreviewSource("");
       flash("You are on the wall");
     } catch {
       setError("Network hiccup. Try once more.");
@@ -221,8 +218,8 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
     });
   }, [cards, filter, query]);
 
-  const shownPreview = preview ? preview : null;
-  const waitingOnLink = Boolean(url.trim()) && !shownPreview && unfurling;
+  const shownPreview = preview && previewSource === url.trim() ? preview : null;
+  const waitingOnLink = Boolean(url.trim()) && previewSource !== url.trim();
 
   return (
     <div className="relative flex min-h-[100dvh] flex-col">
