@@ -92,6 +92,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
   const [unfurling, setUnfurling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounce = useRef<number | null>(null);
+  const unfurlSeq = useRef(0);
 
   useEffect(() => {
     const tick = window.setInterval(async () => {
@@ -119,7 +120,13 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
   useEffect(() => {
     if (debounce.current) window.clearTimeout(debounce.current);
     const trimmed = url.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setPreview(null);
+      setUnfurling(false);
+      return;
+    }
+    setPreview(null);
+    const seq = ++unfurlSeq.current;
     debounce.current = window.setTimeout(async () => {
       setUnfurling(true);
       try {
@@ -128,6 +135,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: trimmed }),
         });
+        if (seq !== unfurlSeq.current) return;
         if (!res.ok) {
           setPreview(null);
           return;
@@ -136,9 +144,10 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
         setPreview(meta);
         setName((current) => current || meta.name);
       } catch {
+        if (seq !== unfurlSeq.current) return;
         setPreview(null);
       } finally {
-        setUnfurling(false);
+        if (seq === unfurlSeq.current) setUnfurling(false);
       }
     }, 450);
     return () => {
@@ -212,7 +221,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
     });
   }, [cards, filter, query]);
 
-  const shownPreview = preview && preview.url === url.trim() ? preview : null;
+  const shownPreview = preview ? preview : null;
   const waitingOnLink = Boolean(url.trim()) && !shownPreview && unfurling;
 
   return (

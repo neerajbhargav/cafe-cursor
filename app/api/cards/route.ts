@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { detectPlatform, isAllowedUrl } from "@/lib/platforms";
+import { detectPlatform, isAllowedUrl, normalizeUrl } from "@/lib/platforms";
 import { addCard, hashToken, listCards, newOwnerToken, toPublic } from "@/lib/store";
 import type { ContactCard } from "@/lib/types";
 import { unfurl } from "@/lib/unfurl";
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Send JSON." }, { status: 400 });
   }
 
-  const url = (body.url || "").trim();
+  const url = normalizeUrl(body.url || "");
   if (!url || !isAllowedUrl(url)) {
     return NextResponse.json({ error: "Paste a real http, https, or mailto link." }, { status: 400 });
   }

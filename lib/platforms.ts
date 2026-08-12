@@ -76,9 +76,30 @@ export function prettyNameFromHandle(handle: string): string {
     .join(" ");
 }
 
+/** Accept pasted links with or without a scheme (common on mobile). */
+export function normalizeUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+
+  if (/^mailto:/i.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  // Bare email → mailto
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return `mailto:${trimmed}`;
+  }
+
+  // linkedin.com/in/…, www.x.com/…, github.com/…, etc.
+  if (/^(?:[\w-]+\.)+[\w-]+(?:[/:?#].*)?$/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 export function isAllowedUrl(raw: string): boolean {
   try {
-    const url = new URL(raw);
+    const url = new URL(normalizeUrl(raw));
     return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:";
   } catch {
     return false;
