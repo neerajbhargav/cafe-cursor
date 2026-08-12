@@ -6,7 +6,7 @@ import { list, put } from "@vercel/blob";
 import type { ContactCard, PublicCard } from "./types";
 
 const KEY = "cafe-cursor:cards";
-const BLOB_PATH = "cafe-cursor-contacts.json";
+const BLOB_PREFIX = "cafe-cursor-contacts";
 const FILE_PATH = path.join(process.cwd(), ".data", "contacts.json");
 const MAX_CARDS = 400;
 
@@ -62,9 +62,13 @@ async function writeFileStore(cards: ContactCard[]): Promise<void> {
 
 async function readBlobStore(): Promise<ContactCard[]> {
   try {
-    const { blobs } = await list({ prefix: BLOB_PATH, limit: 10 });
-    const blob = blobs.find((b) => b.pathname === BLOB_PATH) ?? blobs[0];
-    if (!blob) return [];
+    const { blobs } = await list({ prefix: BLOB_PREFIX, limit: 40 });
+    if (!blobs.length) return [];
+    // Prefer the newest object. Overwriting one pathname stays CDN-stale for
+    // at least a minute on Blob, so each write uses a fresh pathname.
+    const blob = [...blobs].sort(
+      (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
+    )[0];
     const res = await fetch(blob.url, { cache: "no-store" });
     if (!res.ok) return [];
     const parsed = (await res.json()) as ContactCard[];
@@ -75,11 +79,11 @@ async function readBlobStore(): Promise<ContactCard[]> {
 }
 
 async function writeBlobStore(cards: ContactCard[]): Promise<void> {
-  await put(BLOB_PATH, JSON.stringify(cards), {
+  await put(`${BLOB_PREFIX}/${Date.now()}.json`, JSON.stringify(cards), {
     access: "public",
-    allowOverwrite: true,
     contentType: "application/json",
     addRandomSuffix: false,
+    cacheControlMaxAge: 60,
   });
 }
 
