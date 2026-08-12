@@ -19,6 +19,23 @@ export const PLATFORM_META: Record<Platform, PlatformMeta> = {
   other: { label: "Link", tint: "#e0b48a" },
 };
 
+const TRACKING_PARAMS = new Set([
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_content",
+  "utm_term",
+  "utm_id",
+  "fbclid",
+  "gclid",
+  "mc_cid",
+  "mc_eid",
+  "li_fat_id",
+  "trk",
+  "originalSubdomain",
+  "original_referer",
+]);
+
 export function detectPlatform(raw: string): Platform {
   let host = "";
   try {
@@ -78,23 +95,54 @@ export function prettyNameFromHandle(handle: string): string {
 
 /** Accept pasted links with or without a scheme (common on mobile). */
 export function normalizeUrl(raw: string): string {
-  const trimmed = raw.trim();
+  let trimmed = raw.trim().replace(/[\u200b\u00a0]/g, "");
+  // Mobile share sheets sometimes wrap links in angle brackets or quotes.
+  trimmed = trimmed.replace(/^<|>$/g, "").replace(/^["']|["']$/g, "").trim();
   if (!trimmed) return "";
 
   if (/^mailto:/i.test(trimmed)) return trimmed;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-
-  // Bare email → mailto
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
     return `mailto:${trimmed}`;
   }
 
-  // linkedin.com/in/…, www.x.com/…, github.com/…, etc.
-  if (/^(?:[\w-]+\.)+[\w-]+(?:[/:?#].*)?$/i.test(trimmed)) {
-    return `https://${trimmed}`;
+  let candidate = trimmed;
+  if (!/^https?:\/\//i.test(candidate)) {
+    if (/^(?:[\w-]+\.)+[\w-]+(?:[/:?#].*)?$/i.test(candidate)) {
+      candidate = `https://${candidate}`;
+    } else {
+      return trimmed;
+    }
   }
 
-  return trimmed;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return candidate;
+
+    url.hash = "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (TRACKING_PARAMS.has(key) || key.toLowerCase().startsWith("utm_")) {
+        url.searchParams.delete(key);
+      }
+    }
+
+    // Stable path: drop trailing slash except for root.
+    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+
+    // Prefer https + bare host without www for social hosts.
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    url.hostname = host;
+    if (url.protocol === "http:") url.protocol = "https:";
+
+    return url.toString();
+  } catch {
+    return candidate;
+  }
+}
+
+export function canonicalUrl(raw: string): string {
+  return normalizeUrl(raw).replace(/\/$/, "");
 }
 
 export function isAllowedUrl(raw: string): boolean {

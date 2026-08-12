@@ -65,8 +65,22 @@ function cleanTitle(title: string, platform: Platform, handle: string): string {
     if (beforeDash) cleaned = beforeDash;
   }
 
+  // Instagram often returns just "Instagram" when logged-out scrapes fail.
+  if (platform === "instagram" && /^instagram$/i.test(cleaned) && handle) {
+    return prettyNameFromHandle(handle) || handle;
+  }
+
   if (!cleaned && handle) return prettyNameFromHandle(handle);
   return cleaned;
+}
+
+function avatarFallback(platform: Platform, handle: string): string | null {
+  const h = handle.replace(/^@/, "").trim();
+  if (!h) return null;
+  if (platform === "github") return `https://unavatar.io/github/${encodeURIComponent(h)}`;
+  if (platform === "x") return `https://unavatar.io/twitter/${encodeURIComponent(h)}`;
+  if (platform === "linkedin") return `https://unavatar.io/linkedin/${encodeURIComponent(h)}`;
+  return null;
 }
 
 async function githubProfile(handle: string): Promise<Partial<UnfurlResult> | null> {
@@ -101,6 +115,7 @@ export async function unfurl(raw: string): Promise<UnfurlResult> {
   const platform = detectPlatform(url);
   const handle = handleFromUrl(url, platform);
   const fallbackName = prettyNameFromHandle(handle) || handle || "Someone here";
+  const fallbackImage = avatarFallback(platform, handle);
 
   const base: UnfurlResult = {
     url,
@@ -109,18 +124,25 @@ export async function unfurl(raw: string): Promise<UnfurlResult> {
     handle: handle || "",
     title: fallbackName,
     description: "",
-    image: null,
-    avatar: null,
+    image: fallbackImage,
+    avatar: fallbackImage,
   };
 
   if (platform === "email") {
     const email = url.replace(/^mailto:/i, "");
-    return { ...base, name: email.split("@")[0] || email, handle: email, title: email };
+    return {
+      ...base,
+      name: email.split("@")[0] || email,
+      handle: email,
+      title: email,
+      image: null,
+      avatar: null,
+    };
   }
 
   if (platform === "github" && handle) {
     const gh = await githubProfile(handle);
-    if (gh) return { ...base, ...gh, url, platform };
+    if (gh) return { ...base, ...gh, url, platform, image: gh.image || fallbackImage, avatar: gh.avatar || fallbackImage };
   }
 
   try {
@@ -144,13 +166,14 @@ export async function unfurl(raw: string): Promise<UnfurlResult> {
       url,
     );
     const name = ogTitle ? cleanTitle(ogTitle, platform, handle) : fallbackName;
+    const image = ogImage || fallbackImage;
     return {
       ...base,
       name: name || fallbackName,
       title: name || fallbackName,
       description: ogDesc.slice(0, 240),
-      image: ogImage,
-      avatar: ogImage,
+      image,
+      avatar: image,
     };
   } catch {
     return base;
