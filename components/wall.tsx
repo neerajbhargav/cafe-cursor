@@ -93,8 +93,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
   const [error, setError] = useState<string | null>(null);
   const debounce = useRef<number | null>(null);
   const unfurlSeq = useRef(0);
-  // Only skip auto-fill after the user edits the name field themselves.
-  const nameTouched = useRef(false);
+  const previewProfileUrl = useRef("");
 
   useEffect(() => {
     const tick = window.setInterval(async () => {
@@ -143,7 +142,11 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
         const meta = (await res.json()) as UnfurlResult;
         setPreview(meta);
         setPreviewSource(trimmed);
-        if (!nameTouched.current) {
+        // Always refresh the name when the resolved profile changes.
+        // Manual edits for the same profile still stick because we only
+        // overwrite when meta.url differs from the last previewed profile.
+        if (meta.url !== previewProfileUrl.current) {
+          previewProfileUrl.current = meta.url;
           setName(meta.name);
         }
       } catch {
@@ -183,7 +186,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
       setNote("");
       setPreview(null);
       setPreviewSource("");
-      nameTouched.current = false;
+      previewProfileUrl.current = "";
       flash("You are on the wall");
     } catch {
       setError("Network hiccup. Try once more.");
@@ -357,12 +360,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
           />
           <input
             value={name}
-            onChange={(e) => {
-              const next = e.target.value;
-              setName(next);
-              // Emptying the field re-enables auto-fill from the next preview.
-              nameTouched.current = Boolean(next.trim());
-            }}
+            onChange={(e) => setName(e.target.value)}
             placeholder="Your name"
             className="h-12 w-full rounded-full bg-ink-2 px-4 font-sans text-sm text-paper outline-none placeholder:text-mute sm:w-40"
           />
