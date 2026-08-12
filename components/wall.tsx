@@ -93,6 +93,8 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
   const [error, setError] = useState<string | null>(null);
   const debounce = useRef<number | null>(null);
   const unfurlSeq = useRef(0);
+  // Only skip auto-fill after the user edits the name field themselves.
+  const nameTouched = useRef(false);
 
   useEffect(() => {
     const tick = window.setInterval(async () => {
@@ -121,7 +123,9 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
     if (debounce.current) window.clearTimeout(debounce.current);
     const trimmed = url.trim();
     const seq = ++unfurlSeq.current;
-    if (!trimmed) return;
+    if (!trimmed) {
+      return;
+    }
 
     debounce.current = window.setTimeout(async () => {
       try {
@@ -139,7 +143,9 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
         const meta = (await res.json()) as UnfurlResult;
         setPreview(meta);
         setPreviewSource(trimmed);
-        setName((current) => current || meta.name);
+        if (!nameTouched.current) {
+          setName(meta.name);
+        }
       } catch {
         if (seq !== unfurlSeq.current) return;
         setPreview(null);
@@ -177,6 +183,7 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
       setNote("");
       setPreview(null);
       setPreviewSource("");
+      nameTouched.current = false;
       flash("You are on the wall");
     } catch {
       setError("Network hiccup. Try once more.");
@@ -350,7 +357,12 @@ export function Wall({ initialCards }: { initialCards: PublicCard[] }) {
           />
           <input
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setName(next);
+              // Emptying the field re-enables auto-fill from the next preview.
+              nameTouched.current = Boolean(next.trim());
+            }}
             placeholder="Your name"
             className="h-12 w-full rounded-full bg-ink-2 px-4 font-sans text-sm text-paper outline-none placeholder:text-mute sm:w-40"
           />

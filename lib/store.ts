@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Redis } from "@upstash/redis";
 import { list, put } from "@vercel/blob";
+import { canonicalUrl } from "./platforms";
 import type { ContactCard, PublicCard } from "./types";
 
 const KEY = "cafe-cursor:cards";
@@ -43,6 +44,52 @@ export function toPublic(card: ContactCard): PublicCard {
     avatar: card.avatar,
     createdAt: card.createdAt,
   };
+}
+
+/** Agent/dev debris left on the shared wall during testing. */
+export function isTestDebris(card: ContactCard): boolean {
+  const url = canonicalUrl(card.url).toLowerCase();
+  const note = (card.note || "").trim().toLowerCase();
+  const name = (card.name || "").trim().toLowerCase();
+
+  // Keep real cafe attendees.
+  if (url.includes("linkedin.com/in/shay-bouchles")) return false;
+
+  if (url.includes("example.com")) return true;
+  if (
+    /github\.com\/(vercel|nextjs|torvalds|gaearon)(?:\/|$)/i.test(url)
+  ) {
+    return true;
+  }
+  if (
+    /linkedin\.com\/in\/(williamhgates|satyanadella)(?:\/|$)/i.test(url)
+  ) {
+    return true;
+  }
+  if (/^x\.com\/(vercel|elonmusk)(?:\/|$)/i.test(url) || /twitter\.com\/(vercel|elonmusk)(?:\/|$)/i.test(url)) {
+    return true;
+  }
+  if (
+    [
+      "preview test",
+      "blob-fix",
+      "live",
+      "testing wall",
+      "ship check",
+      "from mobile",
+      "check",
+      "persist",
+    ].includes(note)
+  ) {
+    return true;
+  }
+  if (["alias smoke", "prod smoke", "persist fix", "live test"].includes(name)) {
+    return true;
+  }
+  // Corrupted card from the stale-name bug (wrong name glued to another profile).
+  if (name === "linus torvalds" && url.includes("satyanadella")) return true;
+
+  return false;
 }
 
 async function readFileStore(): Promise<ContactCard[]> {
@@ -87,29 +134,79 @@ async function writeBlobStore(cards: ContactCard[]): Promise<void> {
   });
 }
 
-export function storageMode(): "redis" | "blob" | "file" {
-  if (redis()) return "redis";
-  if (hasBlob()) return "blob";
-  return "file";
-}
-
-export async function listCards(): Promise<ContactCard[]> {
+async function readRawCards(): Promise<ContactCard[]> {
   const r = redis();
   if (r) {
     const rows = (await r.hvals(KEY)) as unknown[];
-    const cards = rows
+    return rows
       .map((row): ContactCard | null => {
         if (!row) return null;
         if (typeof row === "string") return JSON.parse(row) as ContactCard;
         return row as ContactCard;
       })
       .filter((c): c is ContactCard => Boolean(c?.id));
-    return cards.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }
+  if (hasBlob()) return readBlobStore();
+  return readFileStore();
+}
+
+async function writeAllCards(cards: ContactCard[]): Promise<void> {
+  const r = redis();
+  if (r) {
+    const existing = await r.hkeys(KEY);
+    if (existing.length) await r.hdel(KEY, ...existing);
+    if (cards.length) {
+      const payload: Record<string, ContactCard> = {};
+      for (const card of cards) payload[card.id] = card;
+      await r.hset(KEY, payload);
+    }
+    return;
   }
   if (hasBlob()) {
-    return (await readBlobStore()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    await writeBlobStore(cards);
+    return;
   }
-  return (await readFileStore()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  await writeFileStore(cards);
+}
+
+export function storageMode(): "redis" | "blob" | "file" {
+  if (redis()) return "redis";
+  if (hasBlob()) return "blob";
+  return "file";
+}
+
+async function scrubTestDebris(cards: ContactCard[]): Promise<ContactCard[]> {
+  let dirty = false;
+  const kept: ContactCard[] = [];
+  for (const card of cards) {
+    if (isTestDebris(card)) {
+      dirty = true;
+      continue;
+    }
+    // Backfill avatars LinkedIn/etc. block from direct scrapes.
+    if (!card.image && card.handle) {
+      if (card.platform === "linkedin") {
+        dirty = true;
+        const image = `https://unavatar.io/linkedin/${encodeURIComponent(card.handle)}`;
+        kept.push({ ...card, image, avatar: image });
+        continue;
+      }
+      if (card.platform === "x") {
+        dirty = true;
+        const image = `https://unavatar.io/twitter/${encodeURIComponent(card.handle)}`;
+        kept.push({ ...card, image, avatar: image });
+        continue;
+      }
+    }
+    kept.push(card);
+  }
+  if (dirty) await writeAllCards(kept);
+  return kept;
+}
+
+export async function listCards(): Promise<ContactCard[]> {
+  const cards = await scrubTestDebris(await readRawCards());
+  return cards.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
 export async function addCard(card: ContactCard): Promise<ContactCard> {
@@ -122,9 +219,8 @@ export async function addCard(card: ContactCard): Promise<ContactCard> {
   if (existing.length >= MAX_CARDS) {
     throw new Error("The wall is full for this cafe.");
   }
-  const dup = existing.find(
-    (c) => c.url.replace(/\/$/, "") === card.url.replace(/\/$/, ""),
-  );
+  const target = canonicalUrl(card.url);
+  const dup = existing.find((c) => canonicalUrl(c.url) === target);
   if (dup) {
     throw new Error("That link is already on the wall.");
   }
